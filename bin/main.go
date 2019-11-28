@@ -6,7 +6,7 @@ import (
 	"flag"
 	"io/ioutil"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 type Servant struct {
@@ -76,7 +76,7 @@ func init() {
 	flag.Parse()
 }
 
-func createSchema(db *sql.DB) error {
+func createSchema(db *sql.Tx) error {
 	_, err := db.Exec(`
 		DROP TABLE IF EXISTS ascension_costs;
 		DROP TABLE IF EXISTS skill_costs;
@@ -151,106 +151,153 @@ func createSchema(db *sql.DB) error {
 	return nil
 }
 
-func insertClasses(db *sql.DB, classes Classes) error {
-	for id, class := range classes {
-		_, err := db.Exec(`
-			INSERT INTO classes (id, name, icon)
-			VALUES ($1, $2, $3);
-		`, id, class.Name, class.Icon)
+type insertFn func(stmt *sql.Stmt) error
 
-		if err != nil {
-			return err
-		}
+func batchInsert(tx *sql.Tx, sql string, fn insertFn) error {
+	stmt, err := tx.Prepare(sql)
+	if err != nil {
+		return err
+	}
+
+	err = fn(stmt)
+	if err != nil {
+		return err
+	}
+
+	_, err = stmt.Exec()
+	if err != nil {
+		return err
+	}
+
+	err = stmt.Close()
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func insertMaterials(db *sql.DB, materials Materials) error {
-	for id, material := range materials {
-		_, err := db.Exec(`
-			INSERT INTO materials (id, name, icon, position)
-			VALUES ($1, $2, $3, $4);
-		`, id, material.Name, material.Icon, material.Order)
-
-		if err != nil {
-			return err
+func insertClasses(tx *sql.Tx, classes Classes) error {
+	err := batchInsert(tx, pq.CopyIn("classes", "id", "name", "icon"), func(stmt *sql.Stmt) error {
+		for id, class := range classes {
+			_, err := stmt.Exec(id, class.Name, class.Icon)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func insertServants(db *sql.DB, servants Servants) error {
-	for id, servant := range servants {
-		_, err := db.Exec(`
-			INSERT INTO servants (id, name, icon, rarity, class_id)
-			VALUES ($1, $2, $3, $4, $5);
-		`, id, servant.Name, servant.Icon, servant.Rarity, servant.ClassID)
-
-		if err != nil {
-			return err
+func insertMaterials(tx *sql.Tx, materials Materials) error {
+	err := batchInsert(tx, pq.CopyIn("materials", "id", "name", "icon", "position"), func(stmt *sql.Stmt) error {
+		for id, material := range materials {
+			_, err := stmt.Exec(id, material.Name, material.Icon, material.Order)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func insertSkillLevels(db *sql.DB, skillLevels SkillLevels) error {
-	for id, skillLevel := range skillLevels {
-		_, err := db.Exec(`
-			INSERT INTO skill_levels (id, servant_id, level_to)
-			VALUES ($1, $2, $3)
-		`, id, skillLevel.ServantID, skillLevel.LevelTo)
-
-		if err != nil {
-			return err
+func insertServants(tx *sql.Tx, servants Servants) error {
+	err := batchInsert(tx, pq.CopyIn("servants", "id", "name", "icon", "rarity", "class_id"), func(stmt *sql.Stmt) error {
+		for id, servant := range servants {
+			_, err := stmt.Exec(id, servant.Name, servant.Icon, servant.Rarity, servant.ClassID)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func insertAscensionLevels(db *sql.DB, ascensionLevels AscensionLevels) error {
-	for id, ascensionLevel := range ascensionLevels {
-		_, err := db.Exec(`
-			INSERT INTO ascension_levels (id, servant_id, ascend_to)
-			VALUES ($1, $2, $3)
-		`, id, ascensionLevel.ServantID, ascensionLevel.AscendTo)
-
-		if err != nil {
-			return err
+func insertSkillLevels(tx *sql.Tx, skillLevels SkillLevels) error {
+	err := batchInsert(tx, pq.CopyIn("skill_levels", "id", "servant_id", "level_to"), func(stmt *sql.Stmt) error {
+		for id, skillLevel := range skillLevels {
+			_, err := stmt.Exec(id, skillLevel.ServantID, skillLevel.LevelTo)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func insertSkillCosts(db *sql.DB, skillCosts SkillCosts) error {
-	for id, skillCost := range skillCosts {
-		_, err := db.Exec(`
-			INSERT INTO skill_costs (id, skill_level_id, material_id, amount)
-			VALUES ($1, $2, $3, $4)
-		`, id, skillCost.SkillLevelID, skillCost.MaterialID, skillCost.Amount)
-
-		if err != nil {
-			return err
+func insertAscensionLevels(tx *sql.Tx, ascensionLevels AscensionLevels) error {
+	err := batchInsert(tx, pq.CopyIn("ascension_levels", "id", "servant_id", "ascend_to"), func(stmt *sql.Stmt) error {
+		for id, ascensionLevel := range ascensionLevels {
+			_, err := stmt.Exec(id, ascensionLevel.ServantID, ascensionLevel.AscendTo)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func insertAscensionCosts(db *sql.DB, ascensionCosts AscensionCosts) error {
-	for id, ascensionCost := range ascensionCosts {
-		_, err := db.Exec(`
-			INSERT INTO ascension_costs (id, ascension_level_id, material_id, amount)
-			VALUES ($1, $2, $3, $4)
-		`, id, ascensionCost.AscensionLevelID, ascensionCost.MaterialID, ascensionCost.Amount)
-
-		if err != nil {
-			return err
+func insertSkillCosts(tx *sql.Tx, skillCosts SkillCosts) error {
+	err := batchInsert(tx, pq.CopyIn("skill_costs", "id", "skill_level_id", "material_id", "amount"), func(stmt *sql.Stmt) error {
+		for id, skillCost := range skillCosts {
+			_, err := stmt.Exec(id, skillCost.SkillLevelID, skillCost.MaterialID, skillCost.Amount)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func insertAscensionCosts(tx *sql.Tx, ascensionCosts AscensionCosts) error {
+	err := batchInsert(tx, pq.CopyIn("ascension_costs", "id", "ascension_level_id", "material_id", "amount"), func(stmt *sql.Stmt) error {
+		for id, ascensionCost := range ascensionCosts {
+			_, err := stmt.Exec(id, ascensionCost.AscensionLevelID, ascensionCost.MaterialID, ascensionCost.Amount)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -295,43 +342,58 @@ func main() {
 		panic(err)
 	}
 
-	err = createSchema(db)
+	txn, err := db.Begin()
 	if err != nil {
 		panic(err)
 	}
 
-	err = insertClasses(db, fgo.Classes)
+	err = createSchema(txn)
 	if err != nil {
+		txn.Rollback()
 		panic(err)
 	}
 
-	err = insertMaterials(db, fgo.Materials)
+	err = insertClasses(txn, fgo.Classes)
 	if err != nil {
+		txn.Rollback()
 		panic(err)
 	}
 
-	err = insertServants(db, fgo.Servants)
+	err = insertMaterials(txn, fgo.Materials)
 	if err != nil {
+		txn.Rollback()
 		panic(err)
 	}
 
-	err = insertSkillLevels(db, fgo.SkillLevels)
+	err = insertServants(txn, fgo.Servants)
 	if err != nil {
+		txn.Rollback()
 		panic(err)
 	}
 
-	err = insertAscensionLevels(db, fgo.AscensionLevels)
+	err = insertSkillLevels(txn, fgo.SkillLevels)
 	if err != nil {
+		txn.Rollback()
 		panic(err)
 	}
 
-	err = insertSkillCosts(db, fgo.SkillCosts)
+	err = insertAscensionLevels(txn, fgo.AscensionLevels)
 	if err != nil {
+		txn.Rollback()
 		panic(err)
 	}
 
-	err = insertAscensionCosts(db, fgo.AscensionCosts)
+	err = insertSkillCosts(txn, fgo.SkillCosts)
 	if err != nil {
+		txn.Rollback()
 		panic(err)
 	}
+
+	err = insertAscensionCosts(txn, fgo.AscensionCosts)
+	if err != nil {
+		txn.Rollback()
+		panic(err)
+	}
+
+	txn.Commit()
 }
